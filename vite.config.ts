@@ -13,7 +13,7 @@ export default defineConfig({
         minify: false,
         sourcemap: false,
         rollupOptions: {
-            external: ['vscode'],
+            external: ['vscode', 'fs', 'path', 'os'],
         },
     },
     test: {

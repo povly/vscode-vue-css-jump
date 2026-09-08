@@ -2,7 +2,7 @@
   "name": "vscode-vue-css-jump",
   "displayName": "Vue CSS Jump",
   "description": "Ctrl+Click navigation for Vue SFC styles: $style class definitions, style src files, smart tab reuse",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "povly",
   "license": "MIT",
   "repository": {
