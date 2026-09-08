@@ -33,7 +33,7 @@ def main() -> int:
                 if f.endswith('.vsix'):
                     continue
                 p = os.path.join(root, f)
-                z.write(p, f'extension/{os.path.relpath(p, "dist")}')
+                z.write(p, f'extension/{p}')
         for f in ROOT_FILES:
             if os.path.exists(f):
                 z.write(f, f'extension/{f}')
