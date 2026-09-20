@@ -52,7 +52,13 @@ export interface ResolveOptions {
     modulesOnly?: boolean;
 }
 
-const STYLE_BLOCK_RE = /<style\b([^>]*)>([\s\S]*?)<\/style>/gi;
+// Match both `<style attrs>…</style>` and self-closing `<style attrs />`.
+// Group 1: attributes; group 2: inner text (undefined for self-closing).
+const STYLE_BLOCK_RE = /<style\b([^>]*?)(?:\/>|>([\s\S]*?)<\/style>)/gi;
+
+export function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 export function parseStyleBlocks(sfcText: string): StyleBlock[] {
     const blocks: StyleBlock[] = [];
@@ -92,6 +98,112 @@ export function getStyleSources(sfcText: string, vuePath: string, workspaceRoot:
         }
     }
     return { files, inlines };
+}
+
+export interface StyleSrcRange {
+    src: string;
+    start: number;
+    end: number;
+}
+
+/**
+ * Locate a `<style src="…">` attribute value under `offset`.
+ * Returns the raw specifier and its [start, end] range inside the SFC text.
+ */
+export function findStyleSrcAt(sfcText: string, offset: number): StyleSrcRange | null {
+    for (const b of parseStyleBlocks(sfcText)) {
+        if (!b.src) {
+            continue;
+        }
+        const srcRe = new RegExp(`src\\s*=\\s*(["'])${escapeRegExp(b.src)}\\1`);
+        const m = srcRe.exec(sfcText);
+        if (!m) {
+            continue;
+        }
+        const start = m.index + m[0].indexOf(b.src);
+        const end = start + b.src.length;
+        if (offset >= start && offset <= end) {
+            return { src: b.src, start, end };
+        }
+    }
+    return null;
+}
+
+/**
+ * Validation issues for `<style src="…">` references:
+ * missing target file (error) and module style without the `.module.css`
+ * suffix required by css-modules-kit (warning).
+ */
+export interface StyleSrcIssue {
+    src: string;
+    start: number;
+    end: number;
+    severity: 'error' | 'warning';
+    message: string;
+}
+
+export function findStyleSrcIssues(
+    sfcText: string,
+    fileExists?: (src: string) => boolean,
+): StyleSrcIssue[] {
+    const issues: StyleSrcIssue[] = [];
+    for (const b of parseStyleBlocks(sfcText)) {
+        if (!b.src) {
+            continue;
+        }
+        const srcRe = new RegExp(`src\\s*=\\s*(["'])${escapeRegExp(b.src)}\\1`);
+        const m = srcRe.exec(sfcText);
+        if (!m) {
+            continue;
+        }
+        const start = m.index + m[0].indexOf(b.src);
+        const end = start + b.src.length;
+        if (fileExists && !fileExists(b.src)) {
+            issues.push({
+                src: b.src,
+                start,
+                end,
+                severity: 'error',
+                message: `vue-css-jump: файл не существует — проверь имя и регистр (Linux чувствителен к регистру): ${b.src}`,
+            });
+            continue;
+        }
+        if (b.module && !/\.module\.css$/.test(b.src)) {
+            issues.push({
+                src: b.src,
+                start,
+                end,
+                severity: 'warning',
+                message: `vue-css-jump: css-modules-kit требует суффикс .module.css — подсказки и типизация $style для этого файла работать не будут: ${b.src}`,
+            });
+        }
+    }
+    return issues;
+}
+
+/**
+ * All distinct class names available on `$style` — from external module
+ * src-files and inline `<style module>` blocks. Sorted alphabetically.
+ */
+export function collectModuleClassNames(sources: StyleSources): string[] {
+    const names = new Set<string>();
+    for (const f of sources.files) {
+        if (!f.module) {
+            continue;
+        }
+        for (const e of indexCssFile(f.path)) {
+            names.add(e.name);
+        }
+    }
+    for (const inline of sources.inlines) {
+        if (!inline.module) {
+            continue;
+        }
+        for (const e of scanClasses(inline.text, inline.offset)) {
+            names.add(e.name);
+        }
+    }
+    return [...names].sort();
 }
 
 export function scanClasses(text: string, baseOffset = 0): ClassEntry[] {
