@@ -1,8 +1,8 @@
 {
   "name": "vscode-vue-css-jump",
   "displayName": "Vue CSS Jump",
-  "description": "Ctrl+Click navigation for Vue SFC styles: $style class definitions, style src files, smart tab reuse",
-  "version": "0.1.3",
+  "description": "Ctrl+Click navigation for Vue SFC styles ($style, style src) + component hover cards: props, emits, v-models, expose for any imported component tag",
+  "version": "0.4.0",
   "publisher": "povly",
   "license": "MIT",
   "repository": {
@@ -21,8 +21,20 @@
     "css modules",
     "style",
     "navigation",
-    "go to definition"
+    "go to definition",
+    "props",
+    "emits",
+    "component hover"
   ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vue-css-jump.openType",
+        "title": "Open Type Definition",
+        "category": "Vue CSS Jump"
+      }
+    ]
+  },
   "activationEvents": [
     "onLanguage:vue"
   ],

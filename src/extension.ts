@@ -15,9 +15,42 @@ import {
     type ResolveHit,
     type StyleSources,
 } from './lib';
+import { resolveComponentAt, renderComponentMarkdown, collectTypeLinks } from './componentInfo';
+
+const OPEN_TYPE_COMMAND = 'vue-css-jump.openType';
 
 function activate(context: vscode.ExtensionContext): void {
     const selector: vscode.DocumentSelector = [{ language: 'vue', scheme: 'file' }];
+
+    const channel = vscode.window.createOutputChannel('Vue CSS Jump');
+    const debugEnabled = process.env.VUE_CSS_JUMP_DEBUG !== undefined;
+    const warnedSources = new Set<string>();
+
+    function logDebug(message: string): void {
+        if (debugEnabled) {
+            channel.appendLine(`[debug] ${message}`);
+        }
+    }
+
+    function warnUnresolvedOnce(document: vscode.TextDocument, source: string): void {
+        const key = `${document.uri.fsPath}: ${source}`;
+        if (!warnedSources.has(key)) {
+            warnedSources.add(key);
+            channel.appendLine(`[warn] компонент не разрешён: ${source} (${document.uri.fsPath})`);
+        }
+    }
+
+    function componentAt(
+        document: vscode.TextDocument,
+        offset: number,
+    ): ReturnType<typeof resolveComponentAt> {
+        return resolveComponentAt(
+            document.getText(),
+            offset,
+            document.uri.fsPath,
+            workspaceRootOf(document),
+        );
+    }
 
     function workspaceRootOf(document: vscode.TextDocument): string {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
@@ -61,6 +94,13 @@ function activate(context: vscode.ExtensionContext): void {
     ): vscode.Location[] | null {
         const text = document.getText();
         const offset = document.offsetAt(position);
+
+        const component = componentAt(document, offset);
+        if (component !== null && component.file !== null) {
+            logDebug(`definition ${component.name} → ${component.file}`);
+            return [new vscode.Location(vscode.Uri.file(component.file), new vscode.Position(0, 0))];
+        }
+
         const sources: StyleSources = getStyleSources(
             text,
             document.uri.fsPath,
@@ -114,6 +154,31 @@ function activate(context: vscode.ExtensionContext): void {
     ): vscode.Hover | null {
         const text = document.getText();
         const offset = document.offsetAt(position);
+
+        const component = componentAt(document, offset);
+        if (component !== null) {
+            if (component.file === null) {
+                if (/^(\.\/|\.\.\/|@\/|~\/)/.test(component.source)) {
+                    warnUnresolvedOnce(document, component.source);
+                }
+                return null;
+            }
+            logDebug(`hover ${component.name} → ${component.file}`);
+            const typeIndex = collectTypeLinks(component, workspaceRootOf(document));
+            const linkParts = [...typeIndex].map(([n, l]) =>
+                l === null ? `${n}→∅` : `${n}→${path.basename(l.file)}:${l.line + 1}`,
+            );
+            logDebug(`type links: ${linkParts.length > 0 ? linkParts.join(', ') : 'none'}`);
+            const md = new vscode.MarkdownString(
+                renderComponentMarkdown(component, workspaceRootOf(document), typeIndex),
+            );
+            md.isTrusted = { enabledCommands: [OPEN_TYPE_COMMAND] };
+            const range = new vscode.Range(
+                document.positionAt(component.tagStart),
+                document.positionAt(component.tagEnd),
+            );
+            return new vscode.Hover(md, range);
+        }
 
         const srcRange = findStyleSrcAt(text, offset);
         if (srcRange) {
@@ -240,6 +305,23 @@ function activate(context: vscode.ExtensionContext): void {
     const diagnostics = vscode.languages.createDiagnosticCollection('vue-css-jump');
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(OPEN_TYPE_COMMAND, (args: unknown) => {
+            // Hover command links pass [file, line, character]; the payload
+            // is user-forgeable markdown, so validate before opening.
+            if (
+                !Array.isArray(args) ||
+                args.length < 3 ||
+                typeof args[0] !== 'string' ||
+                typeof args[1] !== 'number' ||
+                typeof args[2] !== 'number'
+            ) {
+                return;
+            }
+            const [file, line, character] = args as [string, number, number];
+            void vscode.window.showTextDocument(vscode.Uri.file(file), {
+                selection: new vscode.Range(line, character, line, character),
+            });
+        }),
         vscode.languages.registerDefinitionProvider(selector, { provideDefinition }),
         vscode.languages.registerHoverProvider(selector, { provideHover }),
         vscode.languages.registerCompletionItemProvider(
@@ -252,6 +334,7 @@ function activate(context: vscode.ExtensionContext): void {
             '`',
         ),
         diagnostics,
+        channel,
         vscode.workspace.onDidOpenTextDocument(refreshDiagnostics),
         vscode.workspace.onDidChangeTextDocument((e) => {
             if (e.document.languageId === 'vue') {
